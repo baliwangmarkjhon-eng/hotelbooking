@@ -1,0 +1,1397 @@
+status: exited
+stdout file: /figaro/tool-output/bash/4/stdout (62166 bytes)
+stderr file: /figaro/tool-output/bash/4/stderr (0 bytes)
+exit code: 0
+
+OUTPUT TRUNCATED: the head-and-tail previews below are INCOMPLETE; the middle is omitted. Complete output is saved at the stdout/stderr paths above. If your task depends on omitted content, you MUST use `read` on the relevant file and follow its continuation offsets through the required content before generating or changing code. Do not guess or infer omitted content from the preview. Reading with bash again can truncate again.
+
+--- stdout (head + tail; full output in file above) ---
+--- src/collections/Users.ts ---
+import type { Access, CollectionConfig, FieldAccess } from 'payload'
+
+const isCmsAdmin = (user: unknown) =>
+  Boolean(user && typeof user === 'object' && 'collection' in user && user.collection === 'admins')
+
+const isAppAdmin = (user: unknown) =>
+  Boolean(
+    user &&
+      typeof user === 'object' &&
+      'collection' in user &&
+      user.collection === 'users' &&
+      'role' in user &&
+      user.role === 'admin',
+  )
+
+const isActiveAppUser = (user: unknown) =>
+  Boolean(
+    user &&
+      typeof user === 'object' &&
+      'collection' in user &&
+      user.collection === 'users' &&
+      'active' in user &&
+      user.active !== false,
+  )
+
+const isHotelAdmin = (user: unknown) =>
+  isCmsAdmin(user) || isAppAdmin(user)
+
+const adminOnlyField: FieldAccess = ({ req }) => isCmsAdmin(req.user) || isAppAdmin(req.user)
+
+const manageUsers: Access = ({ req }) => isHotelAdmin(req.user)
+
+export const Users: CollectionConfig = {
+  slug: 'users',
+  auth: {
+    tokenExpiration: 60 * 60 * 8,
+  },
+  access: {
+    admin: ({ req }) => isCmsAdmin(req.user),
+    create: () => true,
+    delete: manageUsers,
+    read: ({ req }) => {
+      if (isHotelAdmin(req.user)) return true
+      if (isActiveAppUser(req.user)) return { id: { equals: req.user?.id } }
+      return false
+    },
+    update: ({ req }) => {
+      if (isHotelAdmin(req.user)) return true
+      if (isActiveAppUser(req.user)) return { id: { equals: req.user?.id } }
+      return false
+    },
+  },
+  admin: {
+    defaultColumns: ['name', 'email', 'role', 'active'],
+    group: 'Hotel Operations',
+    useAsTitle: 'name',
+  },
+  fields: [
+    { name: 'name', type: 'text', required: true },
+    {
+      name: 'role',
+      type: 'select',
+      required: true,
+      defaultValue: 'guest',
+      saveToJWT: true,
+      access: {
+        create: adminOnlyField,
+        update: adminOnlyField,
+      },
+      options: [
+        { label: 'Guest', value: 'guest' },
+        { label: 'Staff', value: 'staff' },
+        { label: 'Administrator', value: 'admin' },
+      ],
+    },
+    {
+      name: 'active',
+      type: 'checkbox',
+      required: true,
+      defaultValue: true,
+      saveToJWT: true,
+      access: {
+        create: adminOnlyField,
+        update: adminOnlyField,
+      },
+    },
+    {
+      name: 'googleProviderId',
+      type: 'text',
+      unique: true,
+      index: true,
+      access: {
+        create: adminOnlyField,
+        update: adminOnlyField,
+      },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+    {
+      name: 'avatarUrl',
+      type: 'text',
+      access: {
+        create: adminOnlyField,
+        update: adminOnlyField,
+      },
+    },
+    {
+      name: 'removedAt',
+      type: 'date',
+      access: {
+        create: adminOnlyField,
+        update: adminOnlyField,
+      },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+  ],
+  timestamps: true,
+}
+--- src/collections/Bookings.ts ---
+import { ValidationError, type Access, type CollectionConfig, type FieldAccess } from 'payload'
+
+const isPayloadAdminUser = (user: unknown) =>
+  Boolean(user && typeof user === 'object' && 'collection' in user && user.collection === 'admins')
+const isHotelTeamUser = (user: unknown) =>
+  Boolean(
+    user &&
+      typeof user === 'object' &&
+      'collection' in user &&
+      user.collection === 'users' &&
+      'active' in user &&
+      user.active !== false &&
+      'role' in user &&
+      (user.role === 'staff' || user.role === 'admin'),
+  )
+const isPayloadAdmin: Access = ({ req }) => isPayloadAdminUser(req.user)
+const isHotelTeam: Access = ({ req }) => isHotelTeamUser(req.user)
+const isHotelAdmin: Access = ({ req }) =>
+  req.user?.collection === 'admins' ||
+  (req.user?.collection === 'users' && req.user.active !== false && req.user.role === 'admin')
+const cannotCreateWorkflowField: FieldAccess = () => false
+const teamWorkflowFieldAccess: FieldAccess = ({ req }) =>
+  req.user?.collection === 'admins' ||
+  (req.user?.collection === 'users' && req.user.active !== false)
+const adminWorkflowFieldAccess: FieldAccess = ({ req }) =>
+  req.user?.collection === 'admins' ||
+  (req.user?.collection === 'users' && req.user.active !== false && req.user.role === 'admin')
+
+export const Bookings: CollectionConfig = {
+  slug: 'bookings',
+  access: {
+    create: () => true,
+    delete: isHotelAdmin,
+    read: ({ req }) => isPayloadAdminUser(req.user) || isHotelTeamUser(req.user),
+    update: ({ req }) => isPayloadAdminUser(req.user) || isHotelTeamUser(req.user),
+  },
+  admin: {
+    defaultColumns: ['reference', 'guestName', 'serviceName', 'arrivalDate', 'status'],
+    group: 'Hotel Operations',
+    useAsTitle: 'reference',
+  },
+  hooks: {
+    beforeValidate: [
+      ({ data, req }) => {
+        if (!data) return data
+
+        const errors: Array<{ message: string; path: string }> = []
+        const arrival = typeof data.arrivalDate === 'string' ? Date.parse(data.arrivalDate) : NaN
+        const departure =
+          typeof data.departureDate === 'string' ? Date.parse(data.departureDate) : NaN
+
+        if (data.kind === 'room') {
+          if (!data.departureDate || Number.isNaN(departure) || departure <= arrival) {
+            errors.push({
+              message: 'Check-out must be a valid date after check-in.',
+              path: 'departureDate',
+            })
+          }
+          if (!Number.isInteger(data.room?.roomTypeId) || data.room.roomTypeId < 1) {
+            errors.push({ message: 'Choose a valid room type.', path: 'room.roomTypeId' })
+          }
+          if (
+            !Number.isInteger(data.room?.floor) ||
+            data.room.floor < 1 ||
+            data.room.floor > 6
+          ) {
+            errors.push({ message: 'Floor must be between 1 and 6.', path: 'room.floor' })
+          }
+        }
+
+        if (
+          typeof data.payment?.total === 'number' &&
+          typeof data.payment?.amountPaid === 'number' &&
+          data.payment.amountPaid > data.payment.total
+        ) {
+          errors.push({
+            message: 'Amount paid cannot exceed the booking total.',
+            path: 'payment.amountPaid',
+          })
+        }
+
+        if (errors.length > 0) {
+          throw new ValidationError({ collection: 'bookings', errors, req })
+        }
+
+        return data
+      },
+    ],
+    beforeChange: [
+      ({ data, operation, originalDoc }) => {
+        if (operation !== 'update' || data.status === originalDoc?.status) return data
+
+        if (data.status === 'checked-in' && !originalDoc?.checkedInAt) {
+          data.checkedInAt = new Date().toISOString()
+        }
+
+        if (data.status === 'checked-out' && !originalDoc?.checkedOutAt) {
+          data.checkedOutAt = new Date().toISOString()
+        }
+
+        return data
+      },
+    ],
+    afterChange: [
+      async ({ doc, operation, previousDoc, req }) => {
+        const previousPaid = operation === 'create' ? 0 : (previousDoc?.payment?.amountPaid ?? 0)
+        const currentPaid = doc.payment?.amountPaid ?? 0
+        const amount = currentPaid - previousPaid
+        if (amount <= 0) return
+
+        const type =
+          previousPaid > 0
+            ? 'balance'
+            : currentPaid >= (doc.payment?.total ?? 0)
+              ? 'full'
+              : 'deposit'
+
+        await req.payload.create({
+          collection: 'transactions',
+          overrideAccess: true,
+          req,
+          data: {
+            booking: doc.id,
+            reference: doc.reference,
+            guestName: doc.guestName,
+            type,
+            amount,
+            method: doc.payment?.method ?? 'Not specified',
+            processedBy: req.user?.collection === 'users' ? req.user.id : undefined,
+          },
+        })
+      },
+    ],
+  },
+  fields: [
+    {
+      name: 'reference',
+      type: 'text',
+      required: true,
+      unique: true,
+      index: true,
+    },
+    {
+      name: 'kind',
+      type: 'select',
+      required: true,
+      options: [
+        { label: 'Room', value: 'room' },
+        { label: 'Amenity or experience', value: 'amenity' },
+      ],
+      admin: { position: 'sidebar' },
+    },
+    {
+      name: 'status',
+      type: 'select',
+      required: true,
+      defaultValue: 'upcoming',
+      access: {
+        create: cannotCreateWorkflowField,
+        update: teamWorkflowFieldAccess,
+      },
+      options: [
+        { label: 'Upcoming', value: 'upcoming' },
+        { label: 'Checked in', value: 'checked-in' },
+        { label: 'Checked out', value: 'checked-out' },
+        { label: 'Cancelled', value: 'cancelled' },
+      ],
+      admin: { position: 'sidebar' },
+    },
+    {
+      name: 'serviceName',
+      label: 'Room, amenity, or experience',
+      type: 'text',
+      required: true,
+    },
+    {
+      name: 'category',
+      type: 'text',
+      required: true,
+      admin: { position: 'sidebar' },
+    },
+    {
+      name: 'guestName',
+      type: 'text',
+      required: true,
+    },
+    {
+      name: 'guest',
+      type: 'group',
+      fields: [
+        { name: 'firstName', type: 'text', required: true },
+        { name: 'lastName', type: 'text', required: true },
+        { name: 'email', type: 'email', required: true, index: true },
+        { name: 'phone', type: 'text', required: true },
+      ],
+    },
+    {
+      name: 'arrivalDate',
+      label: 'Check-in or booking date',
+      type: 'date',
+      required: true,
+      index: true,
+      admin: {
+        date: { pickerAppearance: 'dayOnly' },
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'departureDate',
+      label: 'Check-out date',
+      type: 'date',
+      admin: {
+        condition: (data) => data.kind === 'room',
+        date: { pickerAppearance: 'dayOnly' },
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'bookingTime',
+      type: 'text',
+      admin: {
+        condition: (data) => data.kind === 'amenity',
+        position: 'sidebar',
+      },
+    },
+    {
+      name: 'guests',
+      type: 'number',
+      required: true,
+      min: 1,
+      max: 1000,
+      admin: { position: 'sidebar' },
+    },
+    {
+      name: 'room',
+      type: 'group',
+      admin: { condition: (data) => data.kind === 'room' },
+      fields: [
+        { name: 'roomTypeId', type: 'number' },
+        { name: 'floor', type: 'number', min: 1, max: 6 },
+      ],
+    },
+    {
+      name: 'payment',
+      type: 'group',
+      fields: [
+        {
+          name: 'total',
+          type: 'number',
+          required: true,
+          min: 0,
+          access: { update: adminWorkflowFieldAccess },
+        },
+        { name: 'amountPaid', type: 'number', required: true, min: 0 },
+        { name: 'method', type: 'text', required: true },
+        {
+          name: 'option',
+          type: 'select',
+          options: [
+            { label: '10% down payment', value: 'deposit' },
+            { label: 'Paid in full', value: 'full' },
+          ],
+        },
+        { name: 'remainingBalance', type: 'number', min: 0 },
+        {
+          name: 'status',
+          type: 'select',
+          options: [
+            { label: '10% deposit paid', value: 'deposit-paid' },
+            { label: 'Paid in full', value: 'paid-in-full' },
+            { label: 'Balance due', value: 'balance-due' },
+          ],
+        },
+      ],
+    },
+    {
+      name: 'checkedInAt',
+      type: 'date',
+      access: {
+        create: cannotCreateWorkflowField,
+        update: teamWorkflowFieldAccess,
+      },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+    {
+      name: 'checkedOutAt',
+      type: 'date',
+      access: {
+        create: cannotCreateWorkflowField,
+        update: teamWorkflowFieldAccess,
+      },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+    {
+      name: 'internalNotes',
+      type: 'textarea',
+      access: {
+        create: () => false,
+        read: ({ req }) =>
+          req.user?.collection === 'admins' ||
+          (req.user?.collection === 'users' && req.user.active !== false),
+        update: ({ req }) =>
+          req.user?.collection === 'admins' ||
+          (req.user?.collection === 'users' && req.user.active !== false),
+      },
+    },
+    {
+      name: 'archivedAt',
+      type: 'date',
+      access: {
+        create: cannotCreateWorkflowField,
+        update: adminWorkflowFieldAccess,
+      },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
+  ],
+  timestamps: true,
+  versions: false,
+}
+--- src/collections/RoomRates.ts ---
+import type { Access, CollectionConfig } from 'payload'
+import { revalidateTag } from 'next/cache'
+
+const isCmsAdmin = (user: unknown) =>
+  Boolean(user && typeof user === 'object' && 'collection' in user && user.collection === 'admins')
+
+const appRole = (user: unknown) =>
+  user && typeof user === 'object' && 'collection' in user && user.collection === 'users'
+    ? 'role' in user
+      ? user.role
+      : null
+    : null
+
+const adminOnly: Access = ({ req }) => isCmsAdmin(req.user) || appRole(req.user) === 'admin'
+
+export const RoomRates: CollectionConfig = {
+  slug: 'room-rates',
+  access: {
+    create: adminOnly,
+    delete: adminOnly,
+    read: ({ req }) => {
+      if (isCmsAdmin(req.user) || appRole(req.user)) return true
+      return { active: { equals: true } }
+    },
+    update: adminOnly,
+  },
+  admin: {
+    defaultColumns: ['name', 'rate', 'capacity', 'active'],
+    group: 'Hotel Operations',
+    useAsTitle: 'name',
+  },
+  hooks: {
+    afterChange: [
+      () => {
+        revalidateTag('room-rates', 'max')
+      },
+    ],
+    afterDelete: [
+      () => {
+        revalidateTag('room-rates', 'max')
+      },
+    ],
+  },
+  fields: [
+    { name: 'name', type: 'text', required: true },
+    { name: 'roomTypeId', type: 'number', required: true, unique: true, index: true },
+    { name: 'rate', type: 'number', required: true, min: 0 },
+    { name: 'capacity', type: 'number', required: true, min: 1, max: 20 },
+    { name: 'active', type: 'checkbox', required: true, defaultValue: true },
+  ],
+  timestamps: true,
+}
+--- src/collections/Transactions.ts ---
+import type { Access, CollectionConfig } from 'payload'
+
+const canReadTransactions: Access = ({ req }) => {
+  if (req.user?.collection === 'admins') return true
+  return (
+    req.user?.collection === 'users' &&
+    req.user.active !== false &&
+    (req.user.role === 'staff' || req.user.role === 'admin')
+  )
+}
+
+export const Transactions: CollectionConfig = {
+  slug: 'transactions',
+  access: {
+    create: () => false,
+    delete: () => false,
+    read: canReadTransactions,
+    update: () => false,
+  },
+  admin: {
+    defaultColumns: ['reference', 'guestName', 'type', 'amount', 'createdAt'],
+    group: 'Hotel Operations',
+    useAsTitle: 'reference',
+  },
+  fields: [
+    { name: 'booking', type: 'relationship', relationTo: 'bookings', required: true, index: true },
+    { name: 'reference', type: 'text', required: true, index: true },
+    { name: 'guestName', type: 'text', required: true },
+    {
+      name: 'type',
+      type: 'select',
+      required: true,
+      options: [
+        { label: '10% reservation deposit', value: 'deposit' },
+        { label: 'Paid in full', value: 'full' },
+        { label: 'Balance collected', value: 'balance' },
+      ],
+    },
+    { name: 'amount', type: 'number', required: true, min: 0 },
+    { name: 'method', type: 'text', required: true },
+    { name: 'processedBy', type: 'relationship', relationTo: 'users' },
+  ],
+  timestamps: true,
+  versions: false,
+}
+--- src/lib/app-auth.ts ---
+import 'server-only'
+
+import config from '@payload-config'
+import { cookies } from 'next/headers'
+import { getPayload } from 'payload'
+
+import { auth } from '@/auth'
+import type { User } from '@/payload-types'
+
+const APP_SESSION_COOKIE = 'app-session'
+
+export function createAppAuth(collection: 'users') {
+  return {
+    async login(email: string, password: string) {
+      const payload = await getPayload({ config })
+      const result = await payload.login({
+        collection,
+        data: { email, password },
+      })
+
+      if (!result.token || !result.user || result.user.active === false) {
+        return null
+      }
+
+      const cookieStore = await cookies()
+      cookieStore.set(APP_SESSION_COOKIE, result.token, {
+        httpOnly: true,
+        maxAge: 60 * 60 * 8,
+        path: '/',
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      })
+
+      return result.user
+    },
+
+    async logout() {
+      const cookieStore = await cookies()
+      cookieStore.delete(APP_SESSION_COOKIE)
+    },
+
+    async currentUser(): Promise<User | null> {
+      const oauthSession = await auth()
+      const oauthUserId = oauthSession?.user?.payloadUserId
+      if (oauthUserId) {
+        const payload = await getPayload({ config })
+        const oauthUser = await payload.findByID({
+          collection,
+          id: oauthUserId,
+          overrideAccess: true,
+        })
+        if (oauthUser.active === false || oauthUser.removedAt) return null
+        return oauthUser
+      }
+
+      const token = (await cookies()).get(APP_SESSION_COOKIE)?.value
+      if (!token) return null
+
+      const payload = await getPayload({ config })
+      const authHeaders = new Headers({ Authorization: `JWT ${token}` })
+      const { user } = await payload.auth({ headers: authHeaders })
+
+      if (!user || user.collection !== collection || user.active === false || user.removedAt) return null
+      return user
+    },
+  }
+}
+
+export const appAuth = createAppAuth('users')
+--- src/lib/google-user.ts ---
+import 'server-only'
+
+import config from '@payload-config'
+import { randomBytes } from 'node:crypto'
+import { getPayload } from 'payload'
+
+import type { User } from '@/payload-types'
+
+export const PRIMARY_ADMIN_EMAIL = 'baliwangmarkjhon@gmail.com'
+
+export type VerifiedGoogleIdentity = {
+  providerId: string
+  email: string
+  name: string
+  image?: string | null
+  emailVerified: boolean
+}
+
+export async function syncVerifiedGoogleUser(identity: VerifiedGoogleIdentity): Promise<User> {
+  const email = identity.email.trim().toLowerCase()
+  if (!identity.emailVerified || !identity.providerId || !email) {
+    throw new Error('Google did not return a verified email identity.')
+  }
+
+  const payload = await getPayload({ config })
+  const byProvider = await payload.find({
+    collection: 'users',
+    where: { googleProviderId: { equals: identity.providerId } },
+    limit: 1,
+    overrideAccess: true,
+  })
+  const byEmail =
+    byProvider.docs[0] ??
+    (
+      await payload.find({
+        collection: 'users',
+        where: { email: { equals: email } },
+        limit: 1,
+        overrideAccess: true,
+      })
+    ).docs[0]
+  const role = email === PRIMARY_ADMIN_EMAIL ? 'admin' : (byEmail?.role ?? 'guest')
+
+  if (byEmail) {
+    return payload.update({
+      collection: 'users',
+      id: byEmail.id,
+      overrideAccess: true,
+      data: {
+        name: identity.name || byEmail.name,
+        role,
+        active: true,
+        googleProviderId: identity.providerId,
+        avatarUrl: identity.image ?? byEmail.avatarUrl,
+      },
+    })
+  }
+
+  return payload.create({
+    collection: 'users',
+    overrideAccess: true,
+    data: {
+      name: identity.name || email.split('@')[0],
+      email,
+      password: randomBytes(32).toString('base64url'),
+      role,
+      active: true,
+      googleProviderId: identity.providerId,
+      avatarUrl: identity.image ?? undefined,
+    },
+  })
+}
+--- src/app/(frontend)/auth-actions.ts ---
+'use server'
+
+import config from '@payload-config'
+import { redirect } from 'next/navigation'
+import { getPayload } from 'payload'
+
+import { appAuth } from '@/lib/app-auth'
+
+export type AuthActionResult = { ok: boolean; message: string }
+
+const destinationForRole = (role: 'guest' | 'staff' | 'admin') =>
+  role === 'guest' ? '/' : '/operations'
+
+export async function loginAction(
+  _previous: AuthActionResult,
+  formData: FormData,
+): Promise<AuthActionResult> {
+  const email = String(formData.get('email') ?? '').trim().toLowerCase()
+  const password = String(formData.get('password') ?? '')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8) {
+    return { ok: false, message: 'Enter a valid email and password.' }
+  }
+  try {
+    const user = await appAuth.login(email, password)
+    if (!user) return { ok: false, message: 'This account is inactive.' }
+    redirect(destinationForRole(user.role))
+  } catch (error) {
+    if (error && typeof error === 'object' && 'digest' in error) throw error
+    return { ok: false, message: 'Email or password is incorrect.' }
+  }
+}
+
+export async function quickDemoAdminAction(
+  _previous: AuthActionResult,
+  _formData: FormData,
+): Promise<AuthActionResult> {
+  try {
+    const user = await appAuth.login('baliwangmarkjhon@gmail.com', 'admin123')
+    if (!user || user.role !== 'admin') {
+      await appAuth.logout()
+      return { ok: false, message: 'The demo administrator is unavailable.' }
+    }
+    redirect('/operations')
+  } catch (error) {
+    if (error && typeof error === 'object' && 'digest' in error) throw error
+    return { ok: false, message: 'The demo administrator could not be signed in.' }
+  }
+}
+
+export async function signUpAction(
+  _previous: AuthActionResult,
+  formData: FormData,
+): Promise<AuthActionResult> {
+  const name = String(formData.get('name') ?? '').trim()
+  const email = String(formData.get('email') ?? '').trim().toLowerCase()
+  const password = String(formData.get('password') ?? '')
+  const confirmPassword = String(formData.get('confirmPassword') ?? '')
+  if (name.length < 2) return { ok: false, message: 'Enter your full name.' }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { ok: false, message: 'Enter a valid email address.' }
+  }
+  if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+    return { ok: false, message: 'Use at least 8 characters with a letter and number.' }
+  }
+  if (password !== confirmPassword) return { ok: false, message: 'Passwords do not match.' }
+
+  try {
+    const payload = await getPayload({ config })
+    await payload.create({
+      collection: 'users',
+      draft: false,
+      overrideAccess: false,
+      data: { name, email, password, role: 'guest', active: true },
+    })
+    const user = await appAuth.login(email, password)
+    if (!user) return { ok: false, message: 'Your account was created, but sign-in failed.' }
+    redirect('/')
+  } catch (error) {
+    if (error && typeof error === 'object' && 'digest' in error) throw error
+    return { ok: false, message: 'An account with this email may already exist.' }
+  }
+}
+--- src/app/(frontend)/AuthPanel.tsx ---
+'use client'
+
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { signIn } from 'next-auth/react'
+import { useActionState, useEffect, useRef, useState } from 'react'
+
+import { announceSessionChange } from '@/lib/app-session-browser'
+import { openPreviewOAuth, waitForPreviewOAuthSession } from '@/lib/preview-oauth-browser'
+
+import {
+  loginAction,
+  quickDemoAdminAction,
+  signUpAction,
+  type AuthActionResult,
+} from './auth-actions'
+
+const initialState: AuthActionResult = { ok: false, message: '' }
+
+export default function AuthPanel({ mode }: { mode: 'sign-in' | 'sign-up' }) {
+  const router = useRouter()
+  const action = mode === 'sign-in' ? loginAction : signUpAction
+  const [state, formAction, pending] = useActionState(action, initialState)
+  const [demoState, demoAction, demoPending] = useActionState(
+    quickDemoAdminAction,
+    initialState,
+  )
+  const [googleError, setGoogleError] = useState('')
+  const [googlePending, setGooglePending] = useState(false)
+  const pendingSignIn = useRef<AbortController | null>(null)
+
+  useEffect(() => () => pendingSignIn.current?.abort(), [])
+
+  const googleSignIn = async () => {
+    setGoogleError('')
+    setGooglePending(true)
+    try {
+      const inPreviewIframe = window.self !== window.top
+      if (!inPreviewIframe) {
+        await signIn('google', { redirectTo: '/auth/complete' })
+        return
+      }
+      pendingSignIn.current?.abort()
+      const controller = (pendingSignIn.current = new AbortController())
+      const secret = await openPreviewOAuth()
+      const outcome = await waitForPreviewOAuthSession(secret, controller.signal)
+      if (outcome !== 'complete') {
+        if (outcome !== 'aborted') setGoogleError('Google sign-in expired. Please try again.')
+        return
+      }
+      await announceSessionChange(router)
+      router.push('/auth/complete')
+    } catch {
+      setGoogleError(
+        'Google sign-in is unavailable in this preview. Use email and password or try the published site.',
+      )
+    } finally {
+      setGooglePending(false)
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f4f7f5] px-4 py-8 text-[#15322b] sm:px-6 lg:grid lg:grid-cols-[1.05fr_.95fr] lg:p-0">
+      <section className="hidden min-h-screen flex-col justify-between overflow-hidden bg-[#123d33] p-12 text-white lg:flex">
+        <div className="flex items-center gap-3">
+          <span className="grid h-11 w-11 place-items-center rounded-xl border border-white/25 font-serif text-xl">
+            R
+          </span>
+          <div>
+            <p className="font-semibold tracking-wide">Red 5 Star Hotel</p>
+            <p className="text-sm text-emerald-100/70">Boracay, Philippines</p>
+          </div>
+        </div>
+        <div className="max-w-xl">
+          <p className="mb-5 text-sm font-semibold uppercase tracking-[.22em] text-[#d8b56b]">
+            One account, your whole stay
+          </p>
+          <h1 className="font
+
+[truncated: omitted lines 842-1134 (11038 bytes, bytes 25565-36602)]
+
+async function toggleStaffAction(id: string, active: boolean): Promise<ActionResult> {
+  try {
+    const user = await requireAdmin()
+    const payload = await getPayload({ config })
+    await payload.update({
+      collection: 'users',
+      id,
+      overrideAccess: false,
+      user,
+      data: { active },
+    })
+    return { ok: true, message: active ? 'Staff account activated.' : 'Staff account deactivated.' }
+  } catch {
+    return { ok: false, message: 'The staff account could not be updated.' }
+  }
+}
+
+export async function removeStaffAction(id: string): Promise<ActionResult> {
+  try {
+    const user = await requireAdmin()
+    if (String(user.id) === id) {
+      return { ok: false, message: 'You cannot remove your own administrator account.' }
+    }
+    const payload = await getPayload({ config })
+    const member = await payload.findByID({
+      collection: 'users',
+      id,
+      overrideAccess: false,
+      user,
+    })
+    if (member.role !== 'staff') {
+      return { ok: false, message: 'Only staff accounts can be removed here.' }
+    }
+    await payload.update({
+      collection: 'users',
+      id,
+      overrideAccess: false,
+      user,
+      data: { active: false, removedAt: new Date().toISOString() },
+    })
+    return { ok: true, message: 'Staff access removed. Historical activity was preserved.' }
+  } catch {
+    return { ok: false, message: 'The staff account could not be removed.' }
+  }
+}
+
+export async function updateRateAction(input: {
+  id: string
+  rate: number
+}): Promise<ActionResult> {
+  try {
+    const user = await requireAdmin()
+    if (!Number.isFinite(input.rate) || input.rate < 0) {
+      return { ok: false, message: 'Enter a valid room rate.' }
+    }
+    const payload = await getPayload({ config })
+    await payload.update({
+      collection: 'room-rates',
+      id: input.id,
+      overrideAccess: false,
+      user,
+      data: { rate: input.rate },
+    })
+    return { ok: true, message: 'Room rate updated.' }
+  } catch {
+    return { ok: false, message: 'The room rate could not be updated.' }
+  }
+}
+--- src/app/(frontend)/operations/page.tsx ---
+import config from '@payload-config'
+import { redirect } from 'next/navigation'
+import { getPayload } from 'payload'
+
+import { appAuth } from '@/lib/app-auth'
+
+import OperationsDashboard from './OperationsDashboard'
+
+export default async function OperationsPage() {
+  const user = await appAuth.currentUser()
+  if (!user) redirect('/sign-in')
+  if (user.role === 'guest') redirect('/')
+
+  const payload = await getPayload({ config })
+  const [bookingResult, transactionResult, rateResult, staffResult] = await Promise.all([
+    payload.find({
+      collection: 'bookings',
+      limit: 200,
+      sort: '-createdAt',
+      where: { archivedAt: { exists: false } },
+      overrideAccess: false,
+      user,
+    }),
+    payload.find({ collection: 'transactions', limit: 200, sort: '-createdAt', overrideAccess: false, user }),
+    payload.find({ collection: 'room-rates', limit: 100, sort: 'name', overrideAccess: false, user }),
+    user.role === 'admin'
+      ? payload.find({
+          collection: 'users',
+          limit: 100,
+          sort: 'name',
+          where: {
+            and: [{ role: { equals: 'staff' } }, { removedAt: { exists: false } }],
+          },
+          overrideAccess: false,
+          user,
+        })
+      : Promise.resolve({ docs: [] }),
+  ])
+
+  return (
+    <OperationsDashboard
+      currentUser={{ name: user.name, email: user.email, role: user.role }}
+      bookings={bookingResult.docs.map((booking) => ({
+        id: String(booking.id),
+        reference: booking.reference,
+        guestName: booking.guestName,
+        guestEmail: booking.guest.email,
+        serviceName: booking.serviceName,
+        roomNumber:
+          booking.kind === 'room'
+            ? `Floor ${booking.room?.floor ?? '—'} · Type ${booking.room?.roomTypeId ?? '—'}`
+            : booking.category,
+        arrivalDate: booking.arrivalDate,
+        departureDate: booking.departureDate ?? '',
+        status: booking.status,
+        total: booking.payment.total,
+        amountPaid: booking.payment.amountPaid,
+        remainingBalance:
+          booking.payment.remainingBalance ?? Math.max(0, booking.payment.total - booking.payment.amountPaid),
+        paymentStatus:
+          booking.payment.status ??
+          (booking.payment.amountPaid >= booking.payment.total ? 'paid-in-full' : 'deposit-paid'),
+      }))}
+      transactions={transactionResult.docs.map((transaction) => ({
+        id: String(transaction.id),
+        reference: transaction.reference,
+        guestName: transaction.guestName,
+        type: transaction.type,
+        amount: transaction.amount,
+        method: transaction.method,
+        createdAt: transaction.createdAt,
+      }))}
+      rates={rateResult.docs.map((rate) => ({
+        id: String(rate.id),
+        name: rate.name,
+        rate: rate.rate,
+        capacity: rate.capacity,
+        active: rate.active,
+      }))}
+      staff={staffResult.docs.map((member) => ({
+        id: String(member.id),
+        name: member.name,
+        email: member.email,
+        role: member.role,
+        active: member.active,
+      }))}
+    />
+  )
+}
+--- src/app/(frontend)/operations/OperationsDashboard.tsx ---
+'use client'
+
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState, useTransition } from 'react'
+
+import { signOutEverywhere } from '@/lib/app-session-browser'
+
+import {
+  archiveBookingAction,
+  createStaffAction,
+  removeStaffAction,
+  toggleStaffAction,
+  updateBookingAction,
+  updateRateAction,
+} from './actions'
+
+type BookingRow = {
+  id: string
+  reference: string
+  guestName: string
+  guestEmail: string
+  serviceName: string
+  roomNumber: string
+  arrivalDate: string
+  departureDate: string
+  status: string
+  total: number
+  amountPaid: number
+  remainingBalance: number
+  paymentStatus: string
+}
+type TransactionRow = {
+  id: string
+  reference: string
+  guestName: string
+  type: string
+  amount: number
+  method: string
+  createdAt: string
+}
+type RateRow = { id: string; name: string; rate: number; capacity: number; active: boolean }
+type StaffRow = { id: string; name: string; email: string; role: string; active: boolean }
+type Props = {
+  currentUser: { name: string; email: string; role: 'staff' | 'admin' }
+  bookings: BookingRow[]
+  transactions: TransactionRow[]
+  rates: RateRow[]
+  staff: StaffRow[]
+}
+
+const money = (value: number) =>
+  new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    maximumFractionDigits: 0,
+  }).format(value)
+const shortDate = (value: string) =>
+  value
+    ? new Intl.DateTimeFormat('en-PH', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }).format(new Date(value))
+    : '—'
+
+function Badge({
+  children,
+  tone = 'slate',
+}: {
+  children: React.ReactNode
+  tone?: 'green' | 'amber' | 'blue' | 'slate'
+}) {
+  const styles = {
+    green: 'bg-emerald-50 text-emerald-800 ring-emerald-600/20',
+    amber: 'bg-amber-50 text-amber-800 ring-amber-600/20',
+    blue: 'bg-blue-50 text-blue-800 ring-blue-600/20',
+    slate: 'bg-slate-100 text-slate-700 ring-slate-500/20',
+  }
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles[tone]}`}>
+      {children}
+    </span>
+  )
+}
+
+export default function OperationsDashboard({
+  currentUser,
+  bookings,
+  transactions,
+  rates,
+  staff,
+}: Props) {
+  const router = useRouter()
+  const isAdmin = currentUser.role === 'admin'
+  const [tab, setTab] = useState<'overview' | 'bookings' | 'staff' | 'rates'>(
+    isAdmin ? 'overview' : 'bookings',
+  )
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('all')
+  const [notice, setNotice] = useState('')
+  const [pending, startTransition] = useTransition()
+
+  useEffect(() => {
+    const timer = window.setInterval(() => router.refresh(), 20_000)
+    return () => window.clearInterval(timer)
+  }, [router])
+
+  const run = (task: () => Promise<{ ok: boolean; message: string }>) => {
+    startTransition(async () => {
+      const result = await task()
+      setNotice(result.message)
+      if (result.ok) router.refresh()
+    })
+  }
+
+  const filteredBookings = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return bookings.filter((booking) => {
+      const matchesQuery =
+        !query ||
+        [booking.guestName, booking.guestEmail, booking.reference, booking.serviceName]
+          .join(' ')
+          .toLowerCase()
+          .includes(query)
+      return matchesQuery && (status === 'all' || booking.status === status)
+    })
+  }, [bookings, search, status])
+
+  const collected = transactions.reduce((sum, item) => sum + item.amount, 0)
+  const balances = bookings.reduce((sum, item) => sum + item.remainingBalance, 0)
+  const upcoming = bookings.filter((item) => item.status === 'upcoming').length
+  const occupied = bookings.filter((item) => item.status === 'checked-in').length
+  const adminTabs = [
+    ['overview', 'Revenue & Overview'],
+    ['bookings', 'All Bookings'],
+    ['staff', 'Manage Staff'],
+    ['rates', 'Room Rates & Inventory'],
+  ] as const
+
+  return (
+    <main className="min-h-screen bg-[#f4f7f5] text-[#17362e]">
+      <header className="border-b border-[#dce7e2] bg-white">
+        <div className="mx-auto flex max-w-[1500px] flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-3">
+            <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#123d33] font-serif text-xl text-white">R</span>
+            <div>
+              <p className="font-semibold">Red 5 Star</p>
+              <p className="text-xs font-medium uppercase tracking-[.18em] text-[#647b75]">
+                {isAdmin ? 'Admin dashboard' : 'Staff dashboard'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link href="/" className="inline-flex min-h-11 items-center rounded-xl border border-[#cfddd8] px-4 text-sm font-semibold hover:bg-[#f4f7f5]">
+              Back to Hotel
+            </Link>
+            <button
+              type="button"
+              onClick={() => void signOutEverywhere(router, '/')}
+              className="min-h-11 rounded-xl bg-[#123d33] px-4 text-sm font-semibold text-white hover:bg-[#0c3028]"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto max-w-[1500px] px-4 py-7 sm:px-6 lg:px-8">
+        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[.18em] text-[#98691f]">
+              {isAdmin ? 'Hotel command center' : 'Front desk reservations'}
+            </p>
+            <h1 className="mt-2 font-serif text-4xl sm:text-5xl">Good day, {currentUser.name.split(' ')[0]}</h1>
+            <p className="mt-2 text-[15px] text-[#5f756f]">
+              {currentUser.email} · Live activity refreshes every 20 seconds.
+            </p>
+          </div>
+          {isAdmin && (
+            <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Admin dashboard sections">
+              {adminTabs.map(([value, label]) => (
+                <button
+                  key={value}
+                  role="tab"
+                  aria-selected={tab === value}
+                  onClick={() => setTab(value)}
+                  className={`min-h-11 shrink-0 rounded-xl px-4 text-sm font-semibold ${
+                    tab === value
+                      ? 'bg-[#123d33] text-white'
+                      : 'border border-[#cfddd8] bg-white text-[#48675f]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {notice && (
+          <div role="status" className="mt-5 rounded-xl border border-[#cddfd8] bg-white px-4 py-3 text-sm">
+            {notice}
+          </div>
+        )}
+
+        {isAdmin && tab === 'overview' && (
+          <>
+            <section className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="Hotel performance">
+              {[
+                ['Revenue collected', money(collected), 'Immutable payment ledger'],
+                ['Outstanding balances', money(balances), 'Due before check-out'],
+                ['Upcoming arrivals', String(upcoming), 'Reserved stays'],
+                ['Currently in house', String(occupied), 'Checked-in guests'],
+              ].map(([label, value, detail]) => (
+                <article key={label} className="rounded-2xl border border-[#dce7e2] bg-white p-5 shadow-[0_8px_28px_rgba(30,70,58,.05)]">
+                  <p className="text-sm font-medium text-[#647b75]">{label}</p>
+                  <p className="mt-3 font-serif text-3xl">{value}</p>
+                  <p className="mt-2 text-xs text-[#778b85]">{detail}</p>
+                </article>
+              ))}
+            </section>
+            <section className="mt-7 overflow-hidden rounded-2xl border border-[#dce7e2] bg-white">
+              <div className="border-b border-[#e3ebe8] px-6 py-5">
+                <h2 className="font-serif text-2xl">Recent revenue</h2>
+                <p className="mt-1 text-sm text-[#647b75]">Deposits, full payments, and collected balances.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="bg-[#f8faf9] text-xs uppercase tracking-[.08em] text-[#647b75]">
+                    <tr>{['Reference', 'Guest', 'Type', 'Method', 'Amount', 'Recorded'].map((head) => <th key={head} className="px-5 py-4">{head}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#e8efec]">
+                    {transactions.slice(0, 15).map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-5 py-4 font-mono text-xs">{item.reference}</td>
+                        <td className="px-5 py-4 font-semibold">{item.guestName}</td>
+                        <td className="px-5 py-4 capitalize">{item.type}</td>
+                        <td className="px-5 py-4">{item.method}</td>
+                        <td className="px-5 py-4 font-semibold text-emerald-700">{money(item.amount)}</td>
+                        <td className="px-5 py-4">{shortDate(item.createdAt)}</td>
+                      </tr>
+                    ))}
+                    {transactions.length === 0 && <tr><td colSpan={6} className="px-6 py-14 text-center text-[#647b75]">No payment transactions recorded yet.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+
+        {tab === 'bookings' && (
+          <section className="mt-7 overflow-hidden rounded-2xl border border-[#dce7e2] bg-white">
+            <div className="flex flex-col gap-4 border-b border-[#e3ebe8] px-5 py-5 lg:flex-row lg:items-end lg:justify-between sm:px-6">
+              <div>
+                <h2 className="font-serif text-2xl">{isAdmin ? 'All bookings' : 'Reservations'}</h2>
+                <p className="mt-1 text-sm text-[#647b75]">{filteredBookings.length} matching reservations</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[minmax(240px,1fr)_180px]">
+                <label>
+                  <span className="sr-only">Search reservations</span>
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search guest, email, reference…"
+                    className="min-h-11 w-full rounded-xl border border-[#cfddd8] px-4 text-sm outline-none focus:border-[#1f6b59] focus:ring-4 focus:ring-[#1f6b59]/10"
+                  />
+                </label>
+                <label>
+                  <span className="sr-only">Filter by booking status</span>
+                  <select
+                    value={status}
+                    onChange={(event) => setStatus(event.target.value)}
+                    className="min-h-11 w-full rounded-xl border border-[#cfddd8] bg-white px-3 text-sm"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="upcoming">Reserved</option>
+                    <option value="checked-in">Checked in</option>
+                    <option value="checked-out">Checked out</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[1240px] border-collapse text-left text-sm">
+                <thead className="bg-[#f8faf9] text-xs uppercase tracking-[.08em] text-[#647b75]">
+                  <tr>{['Guest', 'Room / Service', 'Stay', 'Status', 'Payment', 'Balance', 'Actions'].map((head) => <th key={head} className="px-5 py-4 font-semibold">{head}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-[#e8efec]">
+                  {filteredBookings.map((booking) => {
+                    const paid = booking.remainingBalance <= 0
+                    return (
+                      <tr key={booking.id} className="align-top hover:bg-[#fbfcfc]">
+                        <td className="px-5 py-5">
+                          <p className="font-semibold">{booking.guestName}</p>
+                          <p className="mt-1 text-xs text-[#60766f]">{booking.guestEmail}</p>
+                          <p className="mt-1 font-mono text-xs text-[#778b85]">{booking.reference}</p>
+                        </td>
+                        <td className="px-5 py-5"><p className="font-semibold">{booking.serviceName}</p><p className="mt-1 text-xs text-[#778b85]">{booking.roomNumber}</p></td>
+                        <td className="px-5 py-5"><p>{shortDate(booking.arrivalDate)}</p><p className="mt-1 text-xs text-[#778b85]">to {shortDate(booking.departureDate)}</p></td>
+                        <td className="px-5 py-5"><Badge tone={booking.status === 'checked-in' ? 'blue' : booking.status === 'checked-out' ? 'slate' : 'amber'}>{booking.status === 'upcoming' ? 'Reserved' : booking.status}</Badge></td>
+                        <td className="px-5 py-5"><Badge tone={paid ? 'green' : 'amber'}>{paid ? 'Paid in full' : '10% deposit paid'}</Badge><p className="mt-2 text-xs text-[#778b85]">{money(booking.amountPaid)} collected</p></td>
+                        <td className="px-5 py-5"><p className={`font-semibold ${paid ? 'text-emerald-700' : 'text-amber-800'}`}>{money(booking.remainingBalance)}</p><p className="mt-1 text-xs text-[#778b85]">{paid ? 'No balance due' : 'Must settle before check-out'}</p></td>
+                        <td className="px-5 py-4">
+                          <div className="flex max-w-[300px] flex-wrap gap-2">
+                            {booking.status === 'upcoming' && (
+                              <>
+                                <button disabled={pending} onClick={() => run(() => updateBookingAction({ id: booking.id, operation: 'check-in' }))} className="min-h-11 rounded-lg bg-[#1f6b59] px-3 font-semibold text-white">Check in</button>
+                                {!paid && <button disabled={pending} onClick={() => run(() => updateBookingAction({ id: booking.id, operation: 'check-in', settleBalance: true, paymentMethod: 'Front desk' }))} className="min-h-11 rounded-lg border border-amber-300 bg-amber-50 px-3 font-semibold text-amber-900">Settle & check in</button>}
+                              </>
+                            )}
+                            {booking.status === 'checked-in' && <button disabled={pending || !paid} title={!paid ? 'Collect the remaining balance first' : undefined} onClick={() => run(() => updateBookingAction({ id: booking.id, operation: 'check-out' }))} className="min-h-11 rounded-lg bg-[#245d89] px-3 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45">Check out</button>}
+                            {!paid && booking.status !== 'upcoming' && <button disabled={pending} onClick={() => run(() => updateBookingAction({ id: booking.id, operation: 'collect-balance', paymentMethod: 'Front desk' }))} className="min-h-11 rounded-lg border border-amber-300 bg-amber-50 px-3 font-semibold text-amber-900">Collect balance</button>}
+                            {isAdmin && <button disabled={pending} onClick={() => { if (window.confirm('Remove this booking from active operations? Payment history will be preserved.')) run(() => archiveBookingAction(booking.id)) }} className="min-h-11 rounded-lg border border-red-200 px-3 font-semibold text-red-700 hover:bg-red-50">Delete</button>}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {filteredBookings.length === 0 && <tr><td colSpan={7} className="px-6 py-16 text-center text-[#647b75]">No reservations match these filters.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {isAdmin && tab === 'staff' && (
+          <section className="mt-7 grid gap-6 xl:grid-cols-[.8fr_1.2fr]">
+            <form action={(formData) => run(() => createStaffAction(formData))} className="rounded-2xl border border-[#dce7e2] bg-white p-6">
+              <h2 className="font-serif text-2xl">Create staff account</h2>
+              <p className="mt-1 text-sm text-[#647b75]">Staff receive reservation and check-in/out access only.</p>
+              <div className="mt-6 space-y-4">
+                {[['name', 'Full name', 'text'], ['email', 'Work email', 'email'], ['password', 'Temporary password', 'password']].map(([name, label, type]) => (
+                  <label key={name} className="block">
+                    <span className="mb-2 block text-sm font-semibold">{label}</span>
+                    <input name={name} type={type} required minLength={type === 'password' ? 8 : undefined} className="min-h-11 w-full rounded-lg border border-[#cfddd8] px-3" />
+                  </label>
+                ))}
+              </div>
+              <button disabled={pending} className="mt-5 min-h-11 w-full rounded-lg bg-[#123d33] px-4 font-semibold text-white">Create staff account</button>
+            </form>
+            <div className="overflow-hidden rounded-2xl border border-[#dce7e2] bg-white">
+              <div className="border-b border-[#e3ebe8] px-6 py-5"><h2 className="font-serif text-2xl">Team access</h2></div>
+              <div className="divide-y divide-[#e8efec]">
+                {staff.map((member) => (
+                  <div key={member.id} className="flex flex-col gap-4 px-6 py-5 sm:flex-row sm:items-center">
+                    <div className="flex-1"><p className="font-semibold">{member.name}</p><p className="mt-1 text-sm text-[#647b75]">{member.email}</p></div>
+                    <Badge tone={member.active ? 'green' : 'slate'}>{member.active ? 'Active' : 'Inactive'}</Badge>
+                    <button disabled={pending} onClick={() => run(() => toggleStaffAction(member.id, !member.active))} className="min-h-11 rounded-lg border border-[#cfddd8] px-4 text-sm font-semibold">{member.active ? 'Deactivate' : 'Activate'}</button>
+                    <button disabled={pending} onClick={() => { if (window.confirm('Remove this staff account? Historical activity will be preserved.')) run(() => removeStaffAction(member.id)) }} className="min-h-11 rounded-lg border border-red-200 px-4 text-sm font-semibold text-red-700 hover:bg-red-50">Remove</button>
+                  </div>
+                ))}
+                {staff.length === 0 && <p className="px-6 py-14 text-center text-sm text-[#647b75]">No staff accounts yet.</p>}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {isAdmin && tab === 'rates' && (
+          <section className="mt-7 rounded-2xl border border-[#dce7e2] bg-white p-6">
+            <h2 className="font-serif text-2xl">Room rates & inventory</h2>
+            <p className="mt-1 text-sm text-[#647b75]">Update published nightly rates and review room capacity.</p>
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              {rates.map((rate) => (
+                <article key={rate.id} className="flex flex-col gap-4 rounded-xl border border-[#dce7e2] p-4 sm:flex-row sm:items-center">
+                  <div className="flex-1"><p className="font-semibold">{rate.name}</p><p className="mt-1 text-sm text-[#647b75]">Up to {rate.capacity} guests · {rate.active ? 'Active inventory' : 'Inactive'}</p></div>
+                  <form className="flex gap-2" action={(formData) => run(() => updateRateAction({ id: rate.id, rate: Number(formData.get('rate')) }))}>
+                    <input name="rate" type="number" min="0" defaultValue={rate.rate} className="min-h-11 w-32 rounded-lg border border-[#cfddd8] px-3" aria-label={`Rate for ${rate.name}`} />
+                    <button disabled={pending} className="min-h-11 rounded-lg bg-[#123d33] px-4 font-semibold text-white">Save</button>
+                  </form>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  )
+}
+
+--- stderr ---
+
+
+Use `read` on the stdout/stderr paths above for the full output.

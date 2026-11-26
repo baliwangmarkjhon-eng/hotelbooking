@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+@theme inline {
+  --color-background: #0e0d0b;
+  --color-foreground: #f0ece4;
+  --color-card: #161410;
+  --color-card-foreground: #f0ece4;
+  --color-primary: #c9a96e;
+  --color-primary-foreground: #0e0d0b;
+  --color-secondary: #1e1b16;
+  --color-secondary-foreground: #a89880;
+  --color-muted: #1a1814;
+  --color-muted-foreground: #7a6f60;
+  --color-accent: #c9a96e;
+  --color-accent-foreground: #0e0d0b;
+  --color-border: #2a2620;
+  --color-ring: #c9a96e;
+  --font-display: 'Lora', Georgia, serif;
+  --font-body: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 4px;
+}
+
+* {
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+body {
+  background-color: #0e0d0b;
+  color: #f0ece4;
+  font-family: 'Outfit', system-ui, sans-serif;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .receipt-print-root,
+  .receipt-print-root *,
+  .dashboard-print-root,
+  .dashboard-print-root * {
+    visibility: visible !important;
+  }
+
+  .receipt-print-root,
+  .dashboard-print-root {
+    position: absolute !important;
+    inset: 0 auto auto 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  .receipt-dialog-actions {
+    display: none !important;
+  }
+
+  .dashboard-print-actions,
+  .dashboard-print-actions * {
+    display: none !important;
+  }
+
+  .dashboard-print-root {
+    background: white !important;
+    padding: 24px !important;
+  }
+}
